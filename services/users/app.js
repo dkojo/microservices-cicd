@@ -2,9 +2,9 @@
 import express from 'express'
 
 export const USERS = [
-  { id: 1, name: 'Ama Mensah' },
-  { id: 2, name: 'Kwame Boateng' },
-  { id: 3, name: 'Efua Owusu' },
+  { id: 1, fullName: 'Ama Mensah' },
+  { id: 2, fullName: 'Kwame Boateng' },
+  { id: 3, fullName: 'Efua Owusu' },
 ]
 
 export const app = express()
