@@ -1,0 +1,105 @@
+name: Microservices CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One main run at a time; a newer pull request push cancels the older run
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository }}
+
+jobs:
+  pipeline:
+    name: Build, test, store and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write   # push images to GHCR, the artifact store
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/*/package-lock.json
+
+      - name: Build services
+        run: |
+          for svc in users orders; do
+            echo "::group::$svc"
+            npm ci --prefix "services/$svc"
+            echo "::endgroup::"
+          done
+
+      - name: Unit tests
+        run: |
+          for svc in users orders; do
+            echo "::group::$svc"
+            npm test --prefix "services/$svc"
+            echo "::endgroup::"
+          done
+
+      - name: Build Docker images
+        run: |
+          TAG="${GITHUB_SHA::7}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          for svc in users orders; do
+            docker build \
+              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              -t "$REGISTRY/$svc:$TAG" "services/$svc"
+          done
+          docker image ls "$REGISTRY/*"
+
+      # Everything below runs only on main: pull requests stop after the images build
+
+      - name: Sign in to GHCR
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push images to artifact store
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          for svc in users orders; do
+            docker push "$REGISTRY/$svc:$TAG"
+            docker tag "$REGISTRY/$svc:$TAG" "$REGISTRY/$svc:latest"
+            docker push "$REGISTRY/$svc:latest"
+          done
+
+      - name: Create Kubernetes cluster (kind)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: microservices
+
+      # The cluster pulls the images from GHCR, so it runs exactly what was stored
+      - name: Deploy to Kubernetes
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: bash scripts/deploy.sh "$TAG"
+
+      - name: Smoke test
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: bash scripts/smoke-test.sh
+
+      - name: Show cluster state on failure
+        if: failure() && github.ref == 'refs/heads/main'
+        run: |
+          kubectl get all -o wide || true
+          kubectl describe pods || true
+          kubectl logs -l 'app in (users,orders)' --tail=50 || true

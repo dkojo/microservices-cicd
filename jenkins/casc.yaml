@@ -1,0 +1,29 @@
+# Jenkins starts with one admin user and the pipeline job, so there's nothing to click through.
+jenkins:
+  systemMessage: "Local Jenkins for dkojo/microservices-cicd"
+  numExecutors: 2
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: admin
+          password: ${JENKINS_ADMIN_PASSWORD:-admin}
+  authorizationStrategy: loggedInUsersCanDoAnything
+
+jobs:
+  - script: >
+      pipelineJob('microservices-cicd') {
+        description('Build, test, store and deploy the users and orders services')
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote { url('https://github.com/dkojo/microservices-cicd.git') }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile')
+            lightweight(true)
+          }
+        }
+      }

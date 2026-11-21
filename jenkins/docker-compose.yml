@@ -1,0 +1,17 @@
+# Local Jenkins: docker compose -f jenkins/docker-compose.yml up -d --build, then open http://localhost:8090
+services:
+  jenkins:
+    build: .
+    ports:
+      - "8090:8080"
+    environment:
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin}
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Lets pipeline steps build images with the host's Docker. Fine for a local demo only:
+      # anything with this socket controls the host's Docker.
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root   # so the jenkins process can use the mounted Docker socket on Docker Desktop
+
+volumes:
+  jenkins_home:
